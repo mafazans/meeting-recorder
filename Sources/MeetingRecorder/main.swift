@@ -1,3 +1,1 @@
-import MeetingRecorderCore
-
-print(Placeholder.message)
+print("MeetingRecorder")
