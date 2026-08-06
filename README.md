@@ -9,23 +9,36 @@ Audio stays local to this project folder.
 1. Install whisper.cpp: `brew install whisper-cpp`
 2. Confirm the binary path: `which whisper-cli`. If it's not `/opt/homebrew/bin/whisper-cli`,
    update `Config.whisperBinaryPath` in `Sources/MeetingRecorder/Config.swift`.
-3. Download the **multilingual** model (not the `.en` English-only variant — meetings here
-   are a mix of Indonesian and English, and the English-only model produces garbage on
-   non-English audio):
+3. Download the **multilingual `large-v3-turbo`** model (not the `.en` English-only variant
+   — meetings here are a mix of Indonesian and English, and the English-only model produces
+   garbage on non-English audio):
    ```bash
    mkdir -p ~/whisper-models
-   curl -L -o ~/whisper-models/ggml-base.bin \
-     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+   curl -L -o ~/whisper-models/ggml-large-v3-turbo.bin \
+     https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
    ```
-   `Config.transcriptionLanguage` is set to `"id"` (Indonesian) — Whisper picks one language
-   per transcription, so it decodes as Indonesian while still passing through common English
-   words/tech terms it recognizes (deploy, endpoint, testing, dashboard, etc.) mostly intact.
-   True intra-sentence code-switching isn't perfect with any local model. If accuracy on fast
-   or technical speech matters more than the extra download, swap in `ggml-small.bin`
-   (466MB) — noticeably better multilingual accuracy, still fast on Apple Silicon.
-4. Build: `./scripts/build_app.sh`
-5. Launch: `open .build/MeetingRecorder.app`
-6. On the first "Start Recording" click, macOS prompts for Screen Recording permission.
+   This is a ~1.5GB download but runs well under real-time on Apple Silicon (Metal-accelerated)
+   and gives noticeably better accuracy on non-English/code-switched speech than smaller
+   models (`tiny`/`base`/`small`) — it's distilled from `large-v3` to run ~4x faster at nearly
+   the same accuracy. `Config.transcriptionLanguage` is set to `"id"` (Indonesian) — Whisper
+   picks one language per transcription, so it decodes as Indonesian while still passing
+   through common English words/tech terms it recognizes (deploy, endpoint, timeout, dashboard,
+   etc.) mostly intact. True intra-sentence code-switching isn't perfect with any local model.
+   If you want the absolute best accuracy regardless of speed/size, `ggml-large-v3.bin`
+   (~3.1GB) is the ceiling.
+
+   **Important:** `TranscriptionArgs` passes `-mc 0` (max-context = 0) to `whisper-cli`. Without
+   it, `large-v3-turbo` can enter a runaway repetition loop on some audio (observed hanging on
+   a real recording, outputting the same token thousands of times) — `-mc 0` disables carrying
+   prior segment text as context, which is what triggers the compounding failure. Don't remove
+   this flag without re-testing against a real multi-minute recording first.
+4. **Optional — for AI-generated meeting minutes:** install the Claude Code CLI (`claude`) and
+   make sure it's authenticated (`claude` at `/opt/homebrew/bin/claude`, checked via
+   `Config.claudeBinaryPath`). If missing, minutes generation is silently skipped — the
+   transcript still saves normally either way.
+5. Build: `./scripts/build_app.sh`
+6. Launch: `open .build/MeetingRecorder.app`
+7. On the first "Start Recording" click, macOS prompts for Screen Recording permission.
    Grant it in System Settings > Privacy & Security > Screen Recording, then relaunch.
 
 ## Usage
@@ -37,8 +50,14 @@ Click the menubar icon > Start Recording. Click again > Stop Recording. Wait for
   never committed, never synced anywhere).
 - **Transcript (`.md`)** is saved to `~/Documents/ObsidianVault/Recordings/` — this syncs
   across your other Macs via the vault, while the (much larger) audio file stays local.
-- Both files share the same timestamp-based filename (e.g. `2026-08-06-08-31-36.wav` /
-  `.md`), so they're easy to match up.
+- **Meeting minutes** (`<timestamp>-minutes-<title-slug>.md`) are generated automatically
+  right after the transcript, via the `claude` CLI — a short summary plus bulleted action
+  items/decisions, with a Claude-generated title as an `# H1` heading and as the filename
+  suffix (e.g. `2026-08-06-08-32-29-minutes-3pl-logistics-deploy-review.md`). This is
+  best-effort: if `claude` isn't installed or the call fails, it's silently skipped — the
+  transcript itself already saved successfully either way.
+- All files (audio, transcript, minutes) share the same timestamp-based base filename, so
+  they're easy to match up.
 
 If the app crashes or is force-quit mid-recording, relaunch it — it scans for a `.wav`
 in `Recordings/` with no matching `.md` in the vault and offers to transcribe it.
@@ -84,7 +103,5 @@ system audio via a temporary harness). Once Xcode.app is installed:
 
 - Live/streaming transcription during the call
 - Auto-detecting when a meeting app is active
-- Summarization / minutes-of-meeting generation — planned via shelling out to the `claude`
-  CLI after transcription (see `future-work.md` in the Obsidian project folder)
-- Settings UI — paths are constants in `Config.swift`
+- Settings UI — paths/model/language are constants in `Config.swift`
 - Auto-delete of audio after transcription
