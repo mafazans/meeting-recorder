@@ -31,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startRecording() {
-        Task {
+        Task { @MainActor in
             do {
                 let fileURL = try await audioCapture.startCapture(outputDirectory: Config.audioDirectory)
                 currentWavURL = fileURL
@@ -45,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func stopRecordingAndTranscribe() {
-        Task {
+        Task { @MainActor in
             do {
                 try await audioCapture.stopCapture()
             } catch {
@@ -59,7 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let end = Date()
 
             do {
-                let transcript = try TranscriptionService.transcribe(wavFileURL: wavURL)
+                let transcript = try await Task.detached {
+                    try TranscriptionService.transcribe(wavFileURL: wavURL)
+                }.value
                 let mdURL = Config.transcriptsDirectory.appendingPathComponent(
                     wavURL.deletingPathExtension().appendingPathExtension("md").lastPathComponent
                 )

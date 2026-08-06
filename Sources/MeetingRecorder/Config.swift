@@ -13,6 +13,8 @@ enum Config {
 
     static let whisperModelPath = FileManager.default
         .homeDirectoryForCurrentUser
-        .appendingPathComponent("whisper-models/ggml-base.en.bin")
+        .appendingPathComponent("whisper-models/ggml-base.bin")
         .path
+
+    static let transcriptionLanguage = "id"
 }

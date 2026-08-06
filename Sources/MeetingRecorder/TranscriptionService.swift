@@ -21,7 +21,8 @@ enum TranscriptionService {
         let args = TranscriptionArgs.buildArguments(
             modelPath: Config.whisperModelPath,
             inputWAVPath: wavFileURL.path,
-            outputBasePath: outputBasePath
+            outputBasePath: outputBasePath,
+            language: Config.transcriptionLanguage
         )
 
         let process = Process()
