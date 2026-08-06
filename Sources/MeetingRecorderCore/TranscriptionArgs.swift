@@ -10,7 +10,8 @@ public enum TranscriptionArgs {
             "-f", inputWAVPath,
             "-of", outputBasePath,
             "-otxt",
-            "-nt"
+            "-nt",
+            "-mc", "0"
         ]
         if let language {
             args.append(contentsOf: ["-l", language])

@@ -68,6 +68,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let metadata = RecordingMetadata(date: start, startTime: start, endTime: end)
                 try TranscriptWriter.write(transcript: transcript, metadata: metadata, to: mdURL)
                 notify(title: "Transcript saved", body: mdURL.lastPathComponent)
+
+                let minutesTask = Task.detached {
+                    MinutesService.generateMinutes(transcript: transcript)
+                }
+                if let minutes = await minutesTask.value {
+                    try? writeMinutes(minutes, alongside: mdURL)
+                }
             } catch {
                 showAlert(title: "Transcription failed", message: describeTranscriptionError(error))
             }
@@ -107,9 +114,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let metadata = RecordingMetadata(date: modDate, startTime: modDate, endTime: modDate)
             try TranscriptWriter.write(transcript: transcript, metadata: metadata, to: mdURL)
             notify(title: "Transcript saved", body: mdURL.lastPathComponent)
+
+            if let minutes = MinutesService.generateMinutes(transcript: transcript) {
+                try? writeMinutes(minutes, alongside: mdURL)
+            }
         } catch {
             showAlert(title: "Transcription failed", message: describeTranscriptionError(error))
         }
+    }
+
+    private func writeMinutes(_ minutes: MeetingMinutes, alongside transcriptURL: URL) throws {
+        let baseName = transcriptURL.deletingPathExtension().lastPathComponent
+        let minutesURL = transcriptURL.deletingLastPathComponent()
+            .appendingPathComponent("\(baseName)-minutes-\(minutes.titleSlug).md")
+        let content = "# \(minutes.title)\n\n\(minutes.body)\n"
+        try content.write(to: minutesURL, atomically: true, encoding: .utf8)
     }
 
     private func describeCaptureError(_ error: Error) -> String {
