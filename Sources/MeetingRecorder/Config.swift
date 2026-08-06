@@ -1,7 +1,11 @@
 import Foundation
 
 enum Config {
-    static let recordingsDirectory = FileManager.default
+    static let audioDirectory = FileManager.default
+        .homeDirectoryForCurrentUser
+        .appendingPathComponent("Projects/meeting-recorder/Recordings")
+
+    static let transcriptsDirectory = FileManager.default
         .homeDirectoryForCurrentUser
         .appendingPathComponent("Documents/ObsidianVault/Recordings")
 

@@ -2,19 +2,25 @@ import Foundation
 
 public enum RecordingsScanner {
     public static func findOrphanedRecordings(
-        in directory: URL,
+        audioDirectory: URL,
+        transcriptsDirectory: URL,
         fileManager: FileManager = .default
     ) -> [URL] {
-        guard let contents = try? fileManager.contentsOfDirectory(
-            at: directory,
+        guard let audioContents = try? fileManager.contentsOfDirectory(
+            at: audioDirectory,
             includingPropertiesForKeys: nil
         ) else {
             return []
         }
 
-        let wavFiles = contents.filter { $0.pathExtension.lowercased() == "wav" }
+        let transcriptContents = (try? fileManager.contentsOfDirectory(
+            at: transcriptsDirectory,
+            includingPropertiesForKeys: nil
+        )) ?? []
+
+        let wavFiles = audioContents.filter { $0.pathExtension.lowercased() == "wav" }
         let mdBaseNames = Set(
-            contents
+            transcriptContents
                 .filter { $0.pathExtension.lowercased() == "md" }
                 .map { $0.deletingPathExtension().lastPathComponent }
         )
