@@ -40,6 +40,10 @@ Audio stays local to this project folder.
 6. Launch: `open .build/MeetingRecorder.app`
 7. On the first "Start Recording" click, macOS prompts for Screen Recording permission.
    Grant it in System Settings > Privacy & Security > Screen Recording, then relaunch.
+8. **Optional — launch automatically at login/boot:** `./scripts/install_launch_agent.sh`.
+   Installs a LaunchAgent (`~/Library/LaunchAgents/com.arifmafazan.meetingrecorder.launcher.plist`)
+   that opens the app every time you log in. To undo, the script prints the exact
+   `launchctl unload` + `rm` commands when it runs.
 
 ## Usage
 
