@@ -8,15 +8,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var state: RecordingState = .idle
     private var currentRecordingStart: Date?
     private var currentWavURL: URL?
+    private var micEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "micEnabled") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "micEnabled") }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         menuBarController = MenuBarController()
         menuBarController.update(for: state)
+        menuBarController.updateMicToggle(isOn: micEnabled)
         menuBarController.setOnStartStopClicked { [weak self] in
             self?.handleStartStopClicked()
         }
+        menuBarController.setOnMicToggleClicked { [weak self] in
+            self?.handleMicToggleClicked()
+        }
         checkForOrphanedRecordings()
+    }
+
+    private func handleMicToggleClicked() {
+        micEnabled.toggle()
+        menuBarController.updateMicToggle(isOn: micEnabled)
     }
 
     private func handleStartStopClicked() {
@@ -33,7 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startRecording() {
         Task { @MainActor in
             do {
-                let fileURL = try await audioCapture.startCapture(outputDirectory: Config.audioDirectory)
+                let fileURL = try await audioCapture.startCapture(
+                    outputDirectory: Config.audioDirectory,
+                    captureMicrophone: micEnabled
+                )
                 currentWavURL = fileURL
                 currentRecordingStart = Date()
                 state = RecordingStateMachine.transition(from: state, on: .startClicked)
@@ -46,8 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func stopRecordingAndTranscribe() {
         Task { @MainActor in
+            var micFileURL: URL?
             do {
-                try await audioCapture.stopCapture()
+                micFileURL = try await audioCapture.stopCapture()
             } catch {
                 showAlert(title: "Error stopping recording", message: "\(error)")
             }
@@ -62,11 +79,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let transcript = try await Task.detached {
                     try TranscriptionService.transcribe(wavFileURL: wavURL)
                 }.value
+
+                let transcriptForFile = await appendMicTranscriptIfAvailable(
+                    to: transcript,
+                    micFileURL: micFileURL
+                )
+
                 let mdURL = Config.transcriptsDirectory.appendingPathComponent(
                     wavURL.deletingPathExtension().appendingPathExtension("md").lastPathComponent
                 )
                 let metadata = RecordingMetadata(date: start, startTime: start, endTime: end)
-                try TranscriptWriter.write(transcript: transcript, metadata: metadata, to: mdURL)
+                try TranscriptWriter.write(transcript: transcriptForFile, metadata: metadata, to: mdURL)
                 notify(title: "Transcript saved", body: mdURL.lastPathComponent)
 
                 let minutesTask = Task.detached {
@@ -121,6 +144,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch {
             showAlert(title: "Transcription failed", message: describeTranscriptionError(error))
         }
+    }
+
+    /// Transcribes the raw mic-only audio separately and appends it as a clearly labeled
+    /// section, so it's unambiguous which parts of the transcript came from the user's
+    /// own microphone. Best-effort — falls back to the unmodified transcript on any failure.
+    /// Always deletes the temporary mic file, since AudioCaptureService intentionally left
+    /// that cleanup to the caller.
+    private func appendMicTranscriptIfAvailable(to transcript: String, micFileURL: URL?) async -> String {
+        guard let micFileURL else { return transcript }
+        defer { try? FileManager.default.removeItem(at: micFileURL) }
+
+        let micTranscript = try? await Task.detached {
+            try TranscriptionService.transcribe(wavFileURL: micFileURL)
+        }.value
+
+        guard let micTranscript, !micTranscript.isEmpty else { return transcript }
+        return transcript + "\n\n---\n\n## My speech (microphone only)\n\n" + micTranscript
     }
 
     private func writeMinutes(_ minutes: MeetingMinutes, alongside transcriptURL: URL) throws {

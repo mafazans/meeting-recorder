@@ -8,7 +8,7 @@ public enum AudioMixer {
         primary: [Int16],
         secondary: [Int16],
         secondaryOffsetSamples: Int = 0,
-        secondaryGateThreshold: Int16 = 500,
+        secondaryGateRMSThreshold: Double = 800,
         gateChunkSize: Int = 1600
     ) -> [Int16] {
         let offset = max(0, secondaryOffsetSamples)
@@ -23,9 +23,10 @@ public enum AudioMixer {
             let secondaryEnd = max(0, min(end, offset + secondary.count) - offset)
             let isActive: Bool
             if secondaryStart < secondaryEnd, secondaryStart >= 0, secondaryEnd <= secondary.count {
-                isActive = secondary[secondaryStart..<secondaryEnd].contains {
-                    abs(Int32($0)) > Int32(secondaryGateThreshold)
-                }
+                let chunk = secondary[secondaryStart..<secondaryEnd]
+                let sumOfSquares = chunk.reduce(0.0) { $0 + Double($1) * Double($1) }
+                let rms = (sumOfSquares / Double(chunk.count)).squareRoot()
+                isActive = rms > secondaryGateRMSThreshold
             } else {
                 isActive = false
             }

@@ -26,7 +26,7 @@ final class AudioCaptureService: NSObject, SCStreamOutput {
     private var recordingStartDate: Date?
     private var micTapStartDate: Date?
 
-    func startCapture(outputDirectory: URL) async throws -> URL {
+    func startCapture(outputDirectory: URL, captureMicrophone: Bool = true) async throws -> URL {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first else {
             throw AudioCaptureError.noDisplayAvailable
@@ -46,9 +46,12 @@ final class AudioCaptureService: NSObject, SCStreamOutput {
         let writer = try WAVFileWriter(fileURL: fileURL, sampleRate: 16000, channels: 1, bitsPerSample: 16)
         wavWriter = writer
         systemFileURL = fileURL
+        micFileURL = nil
         recordingStartDate = Date()
 
-        startMicCaptureIfAuthorized(timestamp: timestamp)
+        if captureMicrophone {
+            startMicCaptureIfAuthorized(timestamp: timestamp)
+        }
 
         let stream = SCStream(filter: filter, configuration: config, delegate: nil)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio.capture"))
@@ -58,7 +61,10 @@ final class AudioCaptureService: NSObject, SCStreamOutput {
         return fileURL
     }
 
-    func stopCapture() async throws {
+    /// Returns the URL of the raw, unmixed microphone-only WAV, if the mic was captured
+    /// this session — the caller can use it to produce a separate "what I said"
+    /// transcript before it's cleaned up. Returns nil if the mic wasn't captured.
+    func stopCapture() async throws -> URL? {
         try await stream?.stopCapture()
         stream = nil
         wavWriter?.finalize()
@@ -72,7 +78,7 @@ final class AudioCaptureService: NSObject, SCStreamOutput {
         micWriter = nil
         micConverter = nil
 
-        mixMicIntoSystemAudioIfAvailable()
+        return mixMicIntoSystemAudioIfAvailable()
     }
 
     // MARK: - Microphone capture (mixed into the system-audio WAV on stop)
@@ -145,12 +151,11 @@ final class AudioCaptureService: NSObject, SCStreamOutput {
         micWriter?.append(samples: samples)
     }
 
-    private func mixMicIntoSystemAudioIfAvailable() {
+    /// Mixes the captured mic audio into the system-audio WAV in place, then returns the
+    /// mic-only WAV's URL so the caller can transcribe it separately before deleting it.
+    /// The caller owns cleanup of the returned file — it is intentionally not deleted here.
+    private func mixMicIntoSystemAudioIfAvailable() -> URL? {
         defer {
-            if let micFileURL {
-                try? FileManager.default.removeItem(at: micFileURL)
-            }
-            micFileURL = nil
             systemFileURL = nil
             recordingStartDate = nil
             micTapStartDate = nil
@@ -158,12 +163,12 @@ final class AudioCaptureService: NSObject, SCStreamOutput {
 
         guard let systemFileURL, let micFileURL,
               FileManager.default.fileExists(atPath: micFileURL.path) else {
-            return
+            return nil
         }
 
         guard let systemSamples = try? WAVFileReader.readSamples(from: systemFileURL),
               let micSamples = try? WAVFileReader.readSamples(from: micFileURL) else {
-            return
+            return nil
         }
 
         var offsetSamples = 0
@@ -179,10 +184,12 @@ final class AudioCaptureService: NSObject, SCStreamOutput {
         )
 
         guard let writer = try? WAVFileWriter(fileURL: systemFileURL, sampleRate: 16000, channels: 1, bitsPerSample: 16) else {
-            return
+            return nil
         }
         writer.append(samples: mixed)
         writer.finalize()
+
+        return micFileURL
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
