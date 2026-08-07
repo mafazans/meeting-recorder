@@ -3,3 +3,4 @@
 *.xcodeproj
 /Recordings/
 /PLAN.md
+.DS_Store

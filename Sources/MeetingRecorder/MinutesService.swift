@@ -18,13 +18,41 @@ struct MeetingMinutes {
 
 enum MinutesService {
     private static let prompt = """
-    First, provide a short 3-6 word title for this meeting, formatted exactly as \
-    "Title: <title>" on its own line. Then, on the following lines, summarize this \
-    meeting transcript into concise meeting minutes: a short prose summary of what \
-    was discussed, followed by a bulleted list of action items or decisions if any \
-    were mentioned. If the transcript is too garbled or short to summarize \
-    meaningfully, say so briefly (but still provide a best-effort title).
+    You will be given a meeting transcript wrapped in <transcript> tags below. \
+    Produce meeting minutes from it.
+
+    First, output a short 3-6 word title, formatted exactly as "Title: <title>" \
+    on its own line.
+
+    Then, output these exact sections, each as a Markdown heading:
+
+    ## Executive Summary
+    2-3 sentences on the meeting's primary objective and outcome.
+
+    ## Key Decisions
+    A list of what was agreed upon and why. If none, write "No decisions were made."
+
+    ## Action Items
+    A list of action items, each stating who owns it, what it is, and the deadline \
+    if one was given. If the owner or deadline is unclear from the transcript, write \
+    "[UNCLEAR]" for that part instead of guessing. If there are none, write \
+    "No action items."
+
+    ## Open Questions
+    Anything left unresolved, or items where the owner/timeline is vague or missing. \
+    If none, write "None."
+
+    Rules:
+    - Only include information explicitly stated in the transcript. Do not infer or \
+    invent names, dates, or facts that aren't there.
+    - If the transcript is too garbled or short to summarize meaningfully, say so \
+    briefly in the Executive Summary and leave the other sections minimal — but still \
+    provide a best-effort title.
     """
+
+    private static func wrapTranscript(_ transcript: String) -> String {
+        "<transcript>\n\(transcript)\n</transcript>"
+    }
 
     static func generateMinutes(transcript: String) -> MeetingMinutes? {
         guard FileManager.default.fileExists(atPath: Config.claudeBinaryPath) else {
@@ -47,7 +75,8 @@ enum MinutesService {
             return nil
         }
 
-        inputPipe.fileHandleForWriting.write(transcript.data(using: .utf8) ?? Data())
+        let wrapped = wrapTranscript(transcript)
+        inputPipe.fileHandleForWriting.write(wrapped.data(using: .utf8) ?? Data())
         inputPipe.fileHandleForWriting.closeFile()
 
         let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
