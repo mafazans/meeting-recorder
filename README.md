@@ -1,8 +1,9 @@
 # Meeting Recorder
 
-Personal macOS menubar app: captures system audio during a meeting (no bot joins the call),
-transcribes it locally after you click Stop, and saves the transcript to your Obsidian vault.
-Audio stays local to this project folder.
+Personal macOS menubar app: captures system audio (what you hear) mixed with your microphone
+(what you say) during a meeting (no bot joins the call), transcribes it locally after you
+click Stop, and saves the transcript to your Obsidian vault. Audio stays local to this
+project folder.
 
 ## Setup
 
@@ -66,6 +67,16 @@ Click the menubar icon > Start Recording. Click again > Stop Recording. Wait for
 If the app crashes or is force-quit mid-recording, relaunch it — it scans for a `.wav`
 in `Recordings/` with no matching `.md` in the vault and offers to transcribe it.
 
+**Your own voice is captured too.** `AudioCaptureService` also taps the microphone
+(`AVAudioEngine`) in parallel with system audio, starting at the same moment you click Start
+Recording. After Stop, the two streams are mixed into the single output WAV — the mic stream
+is gated by amplitude, so only chunks where you're actually speaking get blended in (avoids
+constantly layering in room/background noise during silence). If mic permission hasn't been
+granted yet on first use, capture proceeds with system audio only and mic starts a bit late
+once you respond to the permission prompt — `AudioMixer` accounts for that start-time offset
+so the mixed result still lines up correctly, it just means your very first ~few seconds
+before granting permission won't include your voice.
+
 ## Known quirks
 
 - **Screen Recording permission resets on rebuild.** This app is ad-hoc code-signed
@@ -84,9 +95,9 @@ in `Recordings/` with no matching `.md` in the vault and offers to transcribe it
   actually records video (capture is configured with a token 2×2 pixel video size — audio
   only). The scary-sounding system dialog is just how macOS phrases that shared permission
   bucket.
-- **System audio only, not microphone.** ScreenCaptureKit captures whatever is currently
-  playing through your audio *output* device (speakers or headset) — other call
-  participants, videos, music. It does not capture your own microphone input.
+- **Microphone permission is separate from Screen Recording.** As of the mic-mixing feature
+  (see Usage), the app also requests Microphone access — its own TCC prompt, independent of
+  Screen Recording. Same ad-hoc-signing rebuild friction applies to it too.
 
 ## Testing
 

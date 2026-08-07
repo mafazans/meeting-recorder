@@ -18,5 +18,7 @@
     <true/>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Meeting Recorder mixes your microphone in with system audio so your own voice is included in meeting recordings.</string>
 </dict>
 </plist>

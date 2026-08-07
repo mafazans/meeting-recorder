@@ -18,6 +18,14 @@ final class AudioCaptureService: NSObject, SCStreamOutput {
         interleaved: true
     )!
 
+    private var audioEngine: AVAudioEngine?
+    private var micWriter: WAVFileWriter?
+    private var micConverter: AVAudioConverter?
+    private var micFileURL: URL?
+    private var systemFileURL: URL?
+    private var recordingStartDate: Date?
+    private var micTapStartDate: Date?
+
     func startCapture(outputDirectory: URL) async throws -> URL {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first else {
@@ -37,6 +45,10 @@ final class AudioCaptureService: NSObject, SCStreamOutput {
         let fileURL = outputDirectory.appendingPathComponent("\(timestamp).wav")
         let writer = try WAVFileWriter(fileURL: fileURL, sampleRate: 16000, channels: 1, bitsPerSample: 16)
         wavWriter = writer
+        systemFileURL = fileURL
+        recordingStartDate = Date()
+
+        startMicCaptureIfAuthorized(timestamp: timestamp)
 
         let stream = SCStream(filter: filter, configuration: config, delegate: nil)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: DispatchQueue(label: "audio.capture"))
@@ -52,6 +64,125 @@ final class AudioCaptureService: NSObject, SCStreamOutput {
         wavWriter?.finalize()
         wavWriter = nil
         converter = nil
+
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine?.stop()
+        audioEngine = nil
+        micWriter?.finalize()
+        micWriter = nil
+        micConverter = nil
+
+        mixMicIntoSystemAudioIfAvailable()
+    }
+
+    // MARK: - Microphone capture (mixed into the system-audio WAV on stop)
+
+    private func startMicCaptureIfAuthorized(timestamp: String) {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            beginMicCapture(timestamp: timestamp)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+                guard granted else { return }
+                DispatchQueue.main.async {
+                    self?.beginMicCapture(timestamp: timestamp)
+                }
+            }
+        default:
+            break
+        }
+    }
+
+    private func beginMicCapture(timestamp: String) {
+        guard audioEngine == nil else { return }
+
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(timestamp)-mic.wav")
+        guard let writer = try? WAVFileWriter(fileURL: fileURL, sampleRate: 16000, channels: 1, bitsPerSample: 16) else {
+            return
+        }
+
+        let engine = AVAudioEngine()
+        let inputNode = engine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+            self?.appendMicBuffer(buffer, inputFormat: inputFormat)
+        }
+
+        do {
+            try engine.start()
+        } catch {
+            inputNode.removeTap(onBus: 0)
+            writer.finalize()
+            return
+        }
+
+        audioEngine = engine
+        micWriter = writer
+        micFileURL = fileURL
+        micTapStartDate = Date()
+    }
+
+    private func appendMicBuffer(_ buffer: AVAudioPCMBuffer, inputFormat: AVAudioFormat) {
+        if micConverter == nil {
+            micConverter = AVAudioConverter(from: inputFormat, to: targetFormat)
+        }
+        guard let micConverter else { return }
+
+        let ratio = targetFormat.sampleRate / inputFormat.sampleRate
+        let outputCapacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 16
+        guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else { return }
+
+        var conversionError: NSError?
+        micConverter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+            outStatus.pointee = .haveData
+            return buffer
+        }
+        guard conversionError == nil, let int16Data = outputBuffer.int16ChannelData else { return }
+
+        let frameLength = Int(outputBuffer.frameLength)
+        let samples = Array(UnsafeBufferPointer(start: int16Data[0], count: frameLength))
+        micWriter?.append(samples: samples)
+    }
+
+    private func mixMicIntoSystemAudioIfAvailable() {
+        defer {
+            if let micFileURL {
+                try? FileManager.default.removeItem(at: micFileURL)
+            }
+            micFileURL = nil
+            systemFileURL = nil
+            recordingStartDate = nil
+            micTapStartDate = nil
+        }
+
+        guard let systemFileURL, let micFileURL,
+              FileManager.default.fileExists(atPath: micFileURL.path) else {
+            return
+        }
+
+        guard let systemSamples = try? WAVFileReader.readSamples(from: systemFileURL),
+              let micSamples = try? WAVFileReader.readSamples(from: micFileURL) else {
+            return
+        }
+
+        var offsetSamples = 0
+        if let recordingStartDate, let micTapStartDate, micTapStartDate > recordingStartDate {
+            let offsetSeconds = micTapStartDate.timeIntervalSince(recordingStartDate)
+            offsetSamples = Int(offsetSeconds * targetFormat.sampleRate)
+        }
+
+        let mixed = AudioMixer.mix(
+            primary: systemSamples,
+            secondary: micSamples,
+            secondaryOffsetSamples: offsetSamples
+        )
+
+        guard let writer = try? WAVFileWriter(fileURL: systemFileURL, sampleRate: 16000, channels: 1, bitsPerSample: 16) else {
+            return
+        }
+        writer.append(samples: mixed)
+        writer.finalize()
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
